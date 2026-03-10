@@ -62,9 +62,32 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 _TIMEOUT = float(os.getenv("TRAFILATURA_TIMEOUT_SECONDS", "20"))
 _NO_SSL = os.getenv("TRAFILATURA_NO_SSL", "false").lower() == "true"
 
+# User-Agent giống trình duyệt — tránh bị chặn bởi trang tin VN (congthuong, danviet, kenh14...)
+_BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+
 
 def _fetch_url(url: str) -> str | None:
-    """Tải HTML từ URL. Thử no_ssl nếu lần đầu thất bại."""
+    """Tải HTML từ URL. Dùng User-Agent trình duyệt để tránh bị chặn."""
+    import requests
+
+    # Ưu tiên: requests với User-Agent trình duyệt (ít bị chặn hơn)
+    try:
+        r = requests.get(
+            url,
+            headers={"User-Agent": _BROWSER_UA},
+            timeout=int(_TIMEOUT),
+            verify=not _NO_SSL,
+        )
+        r.raise_for_status()
+        if r.text and len(r.text) > 100:
+            return r.text
+    except Exception as e:
+        logger.debug("requests fetch failed: %s", e)
+
+    # Fallback: trafilatura.fetch_url
     downloaded = trafilatura.fetch_url(url, no_ssl=_NO_SSL, config=None)
     if downloaded:
         return downloaded
