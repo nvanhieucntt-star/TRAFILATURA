@@ -13,7 +13,7 @@ import os
 from typing import Any
 
 import trafilatura
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, model_validator
@@ -34,7 +34,7 @@ class ExtractRequest(BaseModel):
             raise ValueError("Cần có 'url' hoặc 'html' (không được để trống).")
         if self.output_format not in {"json", "txt"}:
             raise ValueError("output_format phải là 'json' hoặc 'txt'.")
-        if url and not url.startswith(("http://", "https://")):
+        if url and not url.lower().startswith(("http://", "https://")):
             raise ValueError("URL phải bắt đầu bằng http:// hoặc https://")
         return self
 
@@ -111,13 +111,21 @@ def extract(request: ExtractRequest) -> dict[str, Any]:
         source_html = _fetch_url(source_url)
         if not source_html:
             logger.warning("Failed to fetch URL: %s", source_url[:100])
-            raise HTTPException(
-                status_code=400,
-                detail=f"Không tải được nội dung từ URL. (Site có thể chặn bot hoặc URL sai). URL: {(source_url[:80] + '...') if len(source_url) > 80 else source_url}",
-            )
+            # Trả 200 + success=False thay vì 400 — client xử lý fallback (snippet) thống nhất
+            return {
+                "success": False,
+                "source": {"url": source_url},
+                "data": {"text": ""},
+                "error": "Không tải được nội dung (site chặn bot hoặc URL sai)",
+            }
 
     if not source_html:
-        raise HTTPException(status_code=400, detail="Không có nội dung để trích.")
+        return {
+            "success": False,
+            "source": {},
+            "data": {"text": ""},
+            "error": "Không có url hoặc html để trích",
+        }
 
     extracted = trafilatura.extract(
         source_html,
@@ -133,10 +141,13 @@ def extract(request: ExtractRequest) -> dict[str, Any]:
     )
 
     if not extracted:
-        raise HTTPException(
-            status_code=422,
-            detail="Trafilatura không trích được nội dung từ trang này.",
-        )
+        logger.warning("Trafilatura extract empty for URL: %s", (source_url or "")[:80])
+        return {
+            "success": False,
+            "source": {"url": source_url},
+            "data": {"text": ""},
+            "error": "Trafilatura không trích được nội dung từ trang này",
+        }
 
     if request.output_format == "json":
         try:
